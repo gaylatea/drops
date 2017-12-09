@@ -1,4 +1,4 @@
-package drops
+package server
 
 import (
 	"bufio"
@@ -28,14 +28,14 @@ type metric struct {
 
 // Station holds monitoring data about a given station.
 type Station struct {
-	m       sync.RWMutex
+	m       sync.Mutex
 	metrics map[string][]metric
 
 	c    *clientConn
 	tipe string
 
 	runs  map[string]*run
-	runsM sync.RWMutex
+	runsM sync.Mutex
 }
 
 type run struct {
@@ -82,8 +82,8 @@ func (s *Server) handleList(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
 	buf := bytes.NewBufferString("LIST")
 	for name, s := range s.stations {
@@ -108,14 +108,16 @@ func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) 
 		return "", err
 	}
 
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
+
 	// client must have run REGISTER first
+	glog.Infof("%#v", conn)
 	if conn.name == "" {
 		return "", errors.Errorf("client is not a station and cannot report telemetry")
 	}
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
-
+	glog.Infof("%#v", s)
 	station, ok := s.stations[conn.name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", conn.name)
@@ -124,7 +126,7 @@ func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) 
 	station.m.Lock()
 	defer station.m.Unlock()
 
-	station.metrics[name] = append(station.metrics[name], metric{ts: time.Now(), value: floatValue})
+	station.metrics[name] = append(station.metrics[name], metric{ts: s.Clock.Now(), value: floatValue})
 	// to conserve memory just a bit we only keep a certain number of metrics around.
 	if len(station.metrics[name]) > s.maxMetricPoints {
 		_, station.metrics[name] = station.metrics[name][0], station.metrics[name][1:]
@@ -144,9 +146,10 @@ func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error)
 
 	name := args[0]
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
+	glog.Infof("%#v", s)
 	station, ok := s.stations[name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", name)
@@ -173,7 +176,7 @@ func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error)
 
 		buf.WriteString(fmt.Sprintf(" %s", metric))
 		for _, m := range ms {
-			buf.WriteString(fmt.Sprintf(" %d:%f", m.ts.Unix(), m.value))
+			buf.WriteString(fmt.Sprintf(" %d:%.2f", m.ts.Unix(), m.value))
 		}
 	}
 
@@ -193,8 +196,8 @@ func (s *Server) handleRun(conn *clientConn, args ...string) (string, error) {
 
 	name, fn, nonce := args[0], args[1], args[2]
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
 	station, ok := s.stations[name]
 	if !ok {
@@ -245,8 +248,8 @@ func (s *Server) handleDone(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("client is not a station and cannot respond to RPCs")
 	}
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
 	station, ok := s.stations[conn.name]
 	if !ok {
@@ -291,8 +294,8 @@ func (s *Server) handleError(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("client is not a station and cannot respond to RPCs")
 	}
 
-	s.stationsM.RLock()
-	defer s.stationsM.RUnlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
 	station, ok := s.stations[conn.name]
 	if !ok {
@@ -326,11 +329,6 @@ func (s *Server) handle(c net.Conn) {
 	for scanner.Scan() {
 		scan := scanner.Text()
 		cmdParts := strings.Split(scan, " ")
-		if len(cmdParts) < 1 {
-			glog.Errorf("given command %s not actionable", scan)
-			conn.Write([]byte("ERR\n"))
-			continue
-		}
 
 		var fn handlerFunc
 

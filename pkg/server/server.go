@@ -1,9 +1,10 @@
-package drops
+package server
 
 import (
 	"net"
 	"sync"
 
+	"github.com/benbjohnson/clock"
 	"github.com/golang/glog"
 )
 
@@ -15,16 +16,21 @@ type Server struct {
 
 	stations  map[string]*Station
 	stationsM sync.RWMutex
+
+	// Exposed for mocking purposes.
+	Clock clock.Clock
 }
 
-// NewServer constructs and returns a Server.
-func NewServer(listener net.Listener, maxMetricPoints int) *Server {
+// New constructs and returns a Server.
+func New(listener net.Listener, maxMetricPoints int, clock clock.Clock) *Server {
 	return &Server{
 		listener:        listener,
 		maxMetricPoints: maxMetricPoints,
 
 		stations:  map[string]*Station{},
 		stationsM: sync.RWMutex{},
+
+		Clock: clock,
 	}
 }
 
