@@ -1,9 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
-go_binary(
+go_library(
     name = "server",
-    srcs = ["main.go", "cmds.go"],
-    importpath = "github.com/silversupreme/drops/server",
+    srcs = ["handler.go", "server.go"],
+    importpath = "github.com/silversupreme/drops",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_golang_glog//:go_default_library",

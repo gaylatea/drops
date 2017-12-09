@@ -1,19 +1,25 @@
-package main
+package drops
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/pkg/errors"
 )
 
-var (
-	stations  = map[string]*Station{}
-	stationsM = sync.RWMutex{}
-)
+type clientConn struct {
+	net.Conn
+
+	// If the TCP client has REGISTERed, this will be filled in.
+	name string
+}
 
 type metric struct {
 	ts    time.Time
@@ -37,24 +43,26 @@ type run struct {
 	name   string
 }
 
+type handlerFunc func(*clientConn, ...string) (string, error)
+
 // REGISTER cmd
 // Expected args:
 //  - [name]
 //  - [type]
-func handleRegister(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleRegister(conn *clientConn, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
-	stationsM.Lock()
-	defer stationsM.Unlock()
+	s.stationsM.Lock()
+	defer s.stationsM.Unlock()
 
 	name, tipe := args[0], args[1]
-	if _, present := stations[name]; present {
+	if _, present := s.stations[name]; present {
 		return "", errors.Errorf("%s already registered", name)
 	}
 
-	stations[name] = &Station{
+	s.stations[name] = &Station{
 		metrics: map[string][]metric{},
 
 		c:    conn,
@@ -69,16 +77,16 @@ func handleRegister(conn *clientConn, args ...string) (string, error) {
 
 // LIST cmd
 // Expected args: none
-func handleList(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleList(conn *clientConn, args ...string) (string, error) {
 	if len(args) != 0 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
 	buf := bytes.NewBufferString("LIST")
-	for name, s := range stations {
+	for name, s := range s.stations {
 		buf.WriteString(fmt.Sprintf(" %s:%s", name, s.tipe))
 	}
 
@@ -89,7 +97,7 @@ func handleList(conn *clientConn, args ...string) (string, error) {
 // Expected args:
 //  - [name]
 //  - [float]
-func handleMetric(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -105,10 +113,10 @@ func handleMetric(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("client is not a station and cannot report telemetry")
 	}
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
-	station, ok := stations[conn.name]
+	station, ok := s.stations[conn.name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", conn.name)
 	}
@@ -118,7 +126,7 @@ func handleMetric(conn *clientConn, args ...string) (string, error) {
 
 	station.metrics[name] = append(station.metrics[name], metric{ts: time.Now(), value: floatValue})
 	// to conserve memory just a bit we only keep a certain number of metrics around.
-	if len(station.metrics[name]) > *maxMetrics {
+	if len(station.metrics[name]) > s.maxMetricPoints {
 		_, station.metrics[name] = station.metrics[name][0], station.metrics[name][1:]
 	}
 
@@ -129,17 +137,17 @@ func handleMetric(conn *clientConn, args ...string) (string, error) {
 // Expected arguments:
 //  - [name]
 //  - [metric] (optional)
-func handleMetrics(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
 	name := args[0]
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
-	station, ok := stations[name]
+	station, ok := s.stations[name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", name)
 	}
@@ -178,17 +186,17 @@ func handleMetrics(conn *clientConn, args ...string) (string, error) {
 //  - [function]
 //  - [nonce]
 //  - [parameter] (optional)
-func handleRun(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleRun(conn *clientConn, args ...string) (string, error) {
 	if len(args) < 3 || len(args) > 4 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
 	name, fn, nonce := args[0], args[1], args[2]
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
-	station, ok := stations[name]
+	station, ok := s.stations[name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", name)
 	}
@@ -225,7 +233,7 @@ func handleRun(conn *clientConn, args ...string) (string, error) {
 //  - [function]
 //  - [nonce]
 //  - [result] (optional)
-func handleDone(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleDone(conn *clientConn, args ...string) (string, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -237,10 +245,10 @@ func handleDone(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("client is not a station and cannot respond to RPCs")
 	}
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
-	station, ok := stations[conn.name]
+	station, ok := s.stations[conn.name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", conn.name)
 	}
@@ -271,7 +279,7 @@ func handleDone(conn *clientConn, args ...string) (string, error) {
 // Expected arguments:
 //  - [function]
 //  - [nonce]
-func handleError(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleError(conn *clientConn, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -283,10 +291,10 @@ func handleError(conn *clientConn, args ...string) (string, error) {
 		return "", errors.Errorf("client is not a station and cannot respond to RPCs")
 	}
 
-	stationsM.RLock()
-	defer stationsM.RUnlock()
+	s.stationsM.RLock()
+	defer s.stationsM.RUnlock()
 
-	station, ok := stations[conn.name]
+	station, ok := s.stations[conn.name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", conn.name)
 	}
@@ -304,4 +312,75 @@ func handleError(conn *clientConn, args ...string) (string, error) {
 	delete(station.runs, nonce)
 
 	return "ACK", nil
+}
+
+// handle performs the actual line protocol client management.
+func (s *Server) handle(c net.Conn) {
+
+	// Wrap the net.Conn so we can tag more information on it.
+	conn := clientConn{
+		Conn: c,
+	}
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		scan := scanner.Text()
+		cmdParts := strings.Split(scan, " ")
+		if len(cmdParts) < 1 {
+			glog.Errorf("given command %s not actionable", scan)
+			conn.Write([]byte("ERR\n"))
+			continue
+		}
+
+		var fn handlerFunc
+
+		cmdName := cmdParts[0]
+		switch cmdName {
+		case "LIST":
+			fn = s.handleList
+		case "REGISTER":
+			fn = s.handleRegister
+		case "METRIC":
+			fn = s.handleMetric
+		case "METRICS":
+			fn = s.handleMetrics
+		case "RUN":
+			fn = s.handleRun
+		case "DONE":
+			fn = s.handleDone
+		case "ERR":
+			fn = s.handleError
+		default:
+			glog.Errorf("no command %s known", cmdName)
+			conn.Write([]byte("ERR UNRECOGNIZED CMD\n"))
+			continue
+		}
+
+		resp, err := fn(&conn, cmdParts[1:]...)
+		if err != nil {
+			glog.Errorf("error processing %s: %v", cmdName, err)
+			conn.Write([]byte("ERR\n"))
+			continue
+		}
+
+		fmt.Fprintln(conn, resp)
+	}
+	if err := scanner.Err(); err != nil {
+		glog.Errorf("reading standard input: %v", err)
+	}
+
+	// Disconnected registered connections need to be removed from the list
+	// of registered s.stations.
+	if conn.name != "" {
+		s.stationsM.Lock()
+		defer s.stationsM.Unlock()
+
+		if _, ok := s.stations[conn.name]; ok {
+			delete(s.stations, conn.name)
+		}
+
+		glog.Infof("Client %s disconnected.", conn.name)
+
+		// TODO(silversupreme): alert somehow?
+	}
 }
