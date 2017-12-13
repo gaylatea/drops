@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 
@@ -154,5 +155,125 @@ func TestSimpleCmds(t *testing.T) {
 
 			conn.Close()
 		})
+	}
+}
+
+func expect(conn io.Reader, toExpect string) error {
+	reader := bufio.NewReader(conn)
+
+	output, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	expect := fmt.Sprintf("%s\n", toExpect)
+	if output != expect {
+		return fmt.Errorf("expected %s, got %s", expect, output)
+	}
+
+	return nil
+}
+
+func sendExpect(conn io.ReadWriter, toSend, toExpect string) error {
+	send := fmt.Sprintf("%s\n", toSend)
+	if _, err := conn.Write([]byte(send)); err != nil {
+		return err
+	}
+
+	return expect(conn, toExpect)
+}
+
+func TestRpcSuccess(t *testing.T) {
+	// Listen on a random port for each test.
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := listener.Addr()
+	mock := clock.NewMock()
+	server := New(listener, 4, mock)
+	go server.Serve()
+
+	station, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "REGISTER water source", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(client, "LIST", "LIST water:source"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(client, "RUN water test 123123123 1", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	// we should get the request from the client here
+	if err := expect(station, "RUN test 123123123 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "DONE test 123123123 0", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := expect(client, "DONE water test 123123123 0"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRpcFailure(t *testing.T) {
+	// Listen on a random port for each test.
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := listener.Addr()
+	mock := clock.NewMock()
+	server := New(listener, 4, mock)
+	go server.Serve()
+
+	station, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "REGISTER water source", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(client, "LIST", "LIST water:source"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(client, "RUN water test 123123123 true", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	// we should get the request from the client here
+	if err := expect(station, "RUN test 123123123 true"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "ERR test 123123123", "ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := expect(client, "ERR water test 123123123"); err != nil {
+		t.Fatal(err)
 	}
 }

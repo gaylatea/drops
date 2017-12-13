@@ -112,12 +112,10 @@ func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) 
 	defer s.stationsM.Unlock()
 
 	// client must have run REGISTER first
-	glog.Infof("%#v", conn)
 	if conn.name == "" {
 		return "", errors.Errorf("client is not a station and cannot report telemetry")
 	}
 
-	glog.Infof("%#v", s)
 	station, ok := s.stations[conn.name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", conn.name)
@@ -149,7 +147,6 @@ func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error)
 	s.stationsM.Lock()
 	defer s.stationsM.Unlock()
 
-	glog.Infof("%#v", s)
 	station, ok := s.stations[name]
 	if !ok {
 		return "", errors.Errorf("station %s is somehow unknown to us", name)
