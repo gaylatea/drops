@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io/ioutil"
 
+	"github.com/benbjohnson/clock"
 	"github.com/golang/glog"
 	"github.com/silversupreme/drops/pkg/server"
 )
@@ -61,6 +62,6 @@ func main() {
 	}
 
 	glog.Infof("Starting SSL server on %s.", *listenAddr)
-	s := server.New(ln, *maxMetrics)
+	s := server.New(ln, *maxMetrics, clock.New())
 	s.Serve()
 }
