@@ -43,13 +43,13 @@ type run struct {
 	name   string
 }
 
-type handlerFunc func(*clientConn, ...string) (string, error)
+type handlerFunc func(*clientConn, string, ...string) (string, error)
 
 // REGISTER cmd
 // Expected args:
 //  - [name]
 //  - [type]
-func (s *Server) handleRegister(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleRegister(conn *clientConn, uid string, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -77,7 +77,7 @@ func (s *Server) handleRegister(conn *clientConn, args ...string) (string, error
 
 // LIST cmd
 // Expected args: none
-func (s *Server) handleList(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleList(conn *clientConn, uid string, args ...string) (string, error) {
 	if len(args) != 0 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -97,7 +97,7 @@ func (s *Server) handleList(conn *clientConn, args ...string) (string, error) {
 // Expected args:
 //  - [name]
 //  - [float]
-func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleMetric(conn *clientConn, uid string, args ...string) (string, error) {
 	if len(args) != 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -137,7 +137,7 @@ func (s *Server) handleMetric(conn *clientConn, args ...string) (string, error) 
 // Expected arguments:
 //  - [name]
 //  - [metric] (optional)
-func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error) {
+func (s *Server) handleMetrics(conn *clientConn, uid string, args ...string) (string, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
@@ -184,14 +184,13 @@ func (s *Server) handleMetrics(conn *clientConn, args ...string) (string, error)
 // Expected arguments:
 //  - [name]
 //  - [function]
-//  - [nonce]
 //  - [parameter] (optional)
-func (s *Server) handleRun(conn *clientConn, args ...string) (string, error) {
-	if len(args) < 3 || len(args) > 4 {
+func (s *Server) handleRun(conn *clientConn, uid string, args ...string) (string, error) {
+	if len(args) < 2 || len(args) > 3 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
 
-	name, fn, nonce := args[0], args[1], args[2]
+	name, fn := args[0], args[1]
 
 	s.stationsM.Lock()
 	defer s.stationsM.Unlock()
@@ -204,23 +203,23 @@ func (s *Server) handleRun(conn *clientConn, args ...string) (string, error) {
 	station.runsM.Lock()
 	defer station.runsM.Unlock()
 
-	if _, ok := station.runs[nonce]; ok {
-		return "", errors.Errorf("nonce %s already in use", nonce)
+	if _, ok := station.runs[uid]; ok {
+		return "", errors.Errorf("uid %s already in use", uid)
 	}
 
 	// route the command to the proper station connection
-	fmt.Fprintf(station.c, "RUN %s %s", fn, nonce)
+	fmt.Fprintf(station.c, "%s RUN %s", uid, fn)
 
-	if len(args) == 4 {
+	if len(args) == 3 {
 		// include the parameter if the client specified it
-		fmt.Fprintf(station.c, " %s", args[3])
+		fmt.Fprintf(station.c, " %s", args[2])
 	}
 
 	// always include the needed newline
 	fmt.Fprintf(station.c, "\n")
 
 	// save the client connection so we can route back to it later.
-	station.runs[nonce] = &run{
+	station.runs[uid] = &run{
 		client: conn,
 		name:   name,
 	}
@@ -230,15 +229,11 @@ func (s *Server) handleRun(conn *clientConn, args ...string) (string, error) {
 
 // DONE cmd
 // Expected arguments:
-//  - [function]
-//  - [nonce]
 //  - [result] (optional)
-func (s *Server) handleDone(conn *clientConn, args ...string) (string, error) {
-	if len(args) < 2 || len(args) > 3 {
+func (s *Server) handleDone(conn *clientConn, uid string, args ...string) (string, error) {
+	if len(args) > 1 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
-
-	fn, nonce := args[0], args[1]
 
 	// client must have run REGISTER first
 	if conn.name == "" {
@@ -256,35 +251,31 @@ func (s *Server) handleDone(conn *clientConn, args ...string) (string, error) {
 	station.runsM.Lock()
 	defer station.runsM.Unlock()
 
-	c, ok := station.runs[nonce]
+	c, ok := station.runs[uid]
 	if !ok {
-		return "", errors.Errorf("unknown nonce %s", nonce)
+		return "", errors.Errorf("unknown uid %s", uid)
 	}
 
 	// route the command to the proper client connection
-	fmt.Fprintf(c.client, "DONE %s %s %s", c.name, fn, nonce)
-	if len(args) == 3 {
+	fmt.Fprintf(c.client, "%s DONE", uid)
+	if len(args) == 1 {
 		// include the parameter if the station specified it
-		fmt.Fprintf(c.client, " %s", args[2])
+		fmt.Fprintf(c.client, " %s", args[0])
 	}
 
 	// always make sure we include the newline
 	fmt.Fprintf(c.client, "\n")
-	delete(station.runs, nonce)
+	delete(station.runs, uid)
 
 	return "ACK", nil
 }
 
 // ERR cmd
 // Expected arguments:
-//  - [function]
-//  - [nonce]
-func (s *Server) handleError(conn *clientConn, args ...string) (string, error) {
-	if len(args) != 2 {
+func (s *Server) handleError(conn *clientConn, uid string, args ...string) (string, error) {
+	if len(args) != 0 {
 		return "", errors.Errorf("bad arg count: %v", args)
 	}
-
-	fn, nonce := args[0], args[1]
 
 	// client must have run REGISTER first
 	if conn.name == "" {
@@ -302,14 +293,14 @@ func (s *Server) handleError(conn *clientConn, args ...string) (string, error) {
 	station.runsM.Lock()
 	defer station.runsM.Unlock()
 
-	c, ok := station.runs[nonce]
+	c, ok := station.runs[uid]
 	if !ok {
-		return "", errors.Errorf("unknown nonce %s", nonce)
+		return "", errors.Errorf("unknown uid %s", uid)
 	}
 
 	// route the command to the proper client connection
-	fmt.Fprintf(c.client, "ERR %s %s %s\n", c.name, fn, nonce)
-	delete(station.runs, nonce)
+	fmt.Fprintf(c.client, "%s ERR\n", uid)
+	delete(station.runs, uid)
 
 	return "ACK", nil
 }
@@ -329,7 +320,13 @@ func (s *Server) handle(c net.Conn) {
 
 		var fn handlerFunc
 
-		cmdName := cmdParts[0]
+		if len(cmdParts) < 2 {
+			glog.Errorf("bad line received: %s", scan)
+			conn.Write([]byte("FATAL\n"))
+			continue
+		}
+
+		uid, cmdName := cmdParts[0], cmdParts[1]
 		switch cmdName {
 		case "LIST":
 			fn = s.handleList
@@ -347,18 +344,18 @@ func (s *Server) handle(c net.Conn) {
 			fn = s.handleError
 		default:
 			glog.Errorf("no command %s known", cmdName)
-			conn.Write([]byte("ERR UNRECOGNIZED CMD\n"))
+			conn.Write([]byte(fmt.Sprintf("%s ERR UNRECOGNIZED CMD\n", uid)))
 			continue
 		}
 
-		resp, err := fn(&conn, cmdParts[1:]...)
+		resp, err := fn(&conn, uid, cmdParts[2:]...)
 		if err != nil {
 			glog.Errorf("error processing %s: %v", cmdName, err)
-			conn.Write([]byte("ERR\n"))
+			conn.Write([]byte(fmt.Sprintf("%s ERR\n", uid)))
 			continue
 		}
 
-		fmt.Fprintln(conn, resp)
+		fmt.Fprintln(conn, fmt.Sprintf("%s %s", uid, resp))
 	}
 	if err := scanner.Err(); err != nil {
 		glog.Errorf("reading standard input: %v", err)

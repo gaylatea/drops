@@ -24,4 +24,7 @@ release: bin/server-linux bin/shell-darwin
 
 all: bin/server-darwin bin/server-linux bin/shell-darwin bin/shell-linux
 
+test:
+	go test ./... -v
+
 .PHONY: clean

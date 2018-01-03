@@ -23,95 +23,95 @@ var simpleCmdTestCases = []struct {
 	{
 		name: "BlankListCmd",
 		interactions: []interaction{
-			{"LIST", "LIST"},
+			{"1 LIST", "1 LIST"},
 		},
 	},
 	{
 		name: "ListCmdEnforces0Args",
 		interactions: []interaction{
-			{"LIST SOMETHING", "ERR"},
+			{"1 LIST SOMETHING", "1 ERR"},
 		},
 	},
 	{
 		name: "RegisterListCmd",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"LIST", "LIST water:source"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 LIST", "2 LIST water:source"},
 		},
 	},
 	{
 		name: "RegisterErr",
 		interactions: []interaction{
-			{"REGISTER water", "ERR"},
+			{"1 REGISTER water", "1 ERR"},
 		},
 	},
 	{
 		name: "MetricsRequireRegistration",
 		interactions: []interaction{
-			{"METRIC test 10.000", "ERR"},
+			{"1 METRIC test 10.000", "1 ERR"},
 		},
 	},
 	{
 		name: "MetricRegistration",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"METRIC level 91.120", "ACK"},
-			{"METRICS water", "METRICS water level"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 METRIC level 91.120", "2 ACK"},
+			{"3 METRICS water", "3 METRICS water level"},
 		},
 	},
 	{
 		name: "MetricsRequireFloat",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"METRIC level something", "ERR"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 METRIC level something", "2 ERR"},
 		},
 	},
 	{
 		name: "MetricsList",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"METRIC level 1", "ACK"},
-			{"METRIC level 2", "ACK"},
-			{"METRIC level 3", "ACK"},
-			{"METRICS water level", "METRICS water level 0:1.00 0:2.00 0:3.00"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 METRIC level 1", "2 ACK"},
+			{"3 METRIC level 2", "3 ACK"},
+			{"4 METRIC level 3", "4 ACK"},
+			{"5 METRICS water level", "5 METRICS water level 0:1.00 0:2.00 0:3.00"},
 		},
 	},
 	{
 		name: "DoubleRegistrationFails",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"REGISTER water barrel", "ERR"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 REGISTER water barrel", "2 ERR"},
 		},
 	},
 	{
 		name: "UnknownMetricFails",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"METRICS water level", "ERR"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 METRICS water level", "2 ERR"},
 		},
 	},
 	{
 		name: "MaxMetricCount",
 		interactions: []interaction{
-			{"REGISTER water source", "ACK"},
-			{"METRIC level 1", "ACK"},
-			{"METRIC level 2", "ACK"},
-			{"METRIC level 3", "ACK"},
-			{"METRIC level 4", "ACK"},
-			{"METRIC level 5", "ACK"},
-			{"METRICS water level", "METRICS water level 0:2.00 0:3.00 0:4.00 0:5.00"},
+			{"1 REGISTER water source", "1 ACK"},
+			{"2 METRIC level 1", "2 ACK"},
+			{"3 METRIC level 2", "3 ACK"},
+			{"4 METRIC level 3", "4 ACK"},
+			{"5 METRIC level 4", "5 ACK"},
+			{"6 METRIC level 5", "6 ACK"},
+			{"7 METRICS water level", "7 METRICS water level 0:2.00 0:3.00 0:4.00 0:5.00"},
 		},
 	},
 	{
 		name: "UnknownCommand",
 		interactions: []interaction{
-			{"DOODLE", "ERR UNRECOGNIZED CMD"},
+			{"1 DOODLE", "1 ERR UNRECOGNIZED CMD"},
 		},
 	},
 	{
 		name: "Blank",
 		interactions: []interaction{
-			{"", "ERR UNRECOGNIZED CMD"},
+			{"", "FATAL"},
 		},
 	},
 }
@@ -204,28 +204,28 @@ func TestRpcSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(station, "REGISTER water source", "ACK"); err != nil {
+	if err := sendExpect(station, "1 REGISTER water source", "1 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(client, "LIST", "LIST water:source"); err != nil {
+	if err := sendExpect(client, "2 LIST", "2 LIST water:source"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(client, "RUN water test 123123123 1", "ACK"); err != nil {
+	if err := sendExpect(client, "3 RUN water test 1", "3 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
 	// we should get the request from the client here
-	if err := expect(station, "RUN test 123123123 1"); err != nil {
+	if err := expect(station, "3 RUN test 1"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(station, "DONE test 123123123 0", "ACK"); err != nil {
+	if err := sendExpect(station, "3 DONE 0", "3 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := expect(client, "DONE water test 123123123 0"); err != nil {
+	if err := expect(client, "3 DONE 0"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -252,28 +252,28 @@ func TestRpcFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(station, "REGISTER water source", "ACK"); err != nil {
+	if err := sendExpect(station, "1 REGISTER water source", "1 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(client, "LIST", "LIST water:source"); err != nil {
+	if err := sendExpect(client, "2 LIST", "2 LIST water:source"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(client, "RUN water test 123123123 true", "ACK"); err != nil {
+	if err := sendExpect(client, "3 RUN water test true", "3 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
 	// we should get the request from the client here
-	if err := expect(station, "RUN test 123123123 true"); err != nil {
+	if err := expect(station, "3 RUN test true"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sendExpect(station, "ERR test 123123123", "ACK"); err != nil {
+	if err := sendExpect(station, "3 ERR", "3 ACK"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := expect(client, "ERR water test 123123123"); err != nil {
+	if err := expect(client, "3 ERR"); err != nil {
 		t.Fatal(err)
 	}
 }
