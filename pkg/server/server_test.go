@@ -277,3 +277,72 @@ func TestRpcFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestComplexRpcInteraction(t *testing.T) {
+	// Listen on a random port for each test.
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := listener.Addr()
+	mock := clock.NewMock()
+	server := New(listener, 4, mock)
+	go server.Serve()
+
+	station, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plant, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "1 REGISTER water source", "1 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(plant, "2 REGISTER jasmine plant", "2 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(client, "4 RUN jasmine water 60", "4 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	// we should get the request from the client here
+	if err := expect(plant, "4 RUN water 60"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(plant, "5 RUN water run 60", "5 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := expect(station, "5 RUN run 60"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(station, "5 DONE 0", "5 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := expect(plant, "5 DONE 0"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sendExpect(plant, "4 DONE 0", "4 ACK"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := expect(client, "4 DONE 0"); err != nil {
+		t.Fatal(err)
+	}
+}
